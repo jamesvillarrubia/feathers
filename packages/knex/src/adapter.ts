@@ -291,7 +291,7 @@ export class KnexAdapter<
     }
     const builder = this.createQuery(updateParams)
 
-    await builder.update(data, [], { includeTriggerModifications: true })
+    await builder.update(data, [], { includeTriggerModifications: true }).catch(errorHandler)
 
     const items = await this._findOrGet(null, updateParams)
 
