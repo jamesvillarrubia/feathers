@@ -206,6 +206,7 @@ Fixture: an app with an in-memory `users` service, an `authentication` service, 
 - 2026-10-20 James: tier 1 ships a pluggable `hasher` interface. The default hasher is PBKDF2-SHA256 at 600,000 iterations. A Workers deployment that hits an iteration cap swaps in another hasher.
 - 2026-10-20 James: v5 bcrypt hashes verify through the tier 1 pluggable `hasher`. Core ships no bcrypt code; the spec documents a bcrypt-verify hasher the app supplies (for example with `bcryptjs`), and the hash prefix (`$2a$/$2b$` against `pbkdf2-sha256$`) lets the hasher tell the formats apart.
 - 2026-10-20 James: tier 1 has no refresh tokens, and clients log in again on expiry. A refresh strategy moves to tier 2 in the scope table, next to RS256/JWKS.
+- 2026-10-20 James: kept the spec pass's added calls (id column always accepted, dotted query keys rejected, columns whitelist excludes create/patch data keys, `pbkdf2Hasher` export, rehash-on-login as an open question).
 
 ## Open questions for James
 
