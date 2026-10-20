@@ -28,6 +28,11 @@ type HookStore = {
   error: { [method: string]: HookFunction[] }
   collected: { [method: string]: AroundHookFunction[] }
   collectedAll: { before?: AroundHookFunction[]; after?: AroundHookFunction[] }
+  /**
+   * Methods that should receive "all" hooks. Methods not in this set
+   * will only receive their specific hooks, not "all" hooks.
+   */
+  allMethods?: Set<string>
 }
 
 type HookEnabled = { __hooks: HookStore }
@@ -55,15 +60,19 @@ export function convertHookData(input: any) {
   return result
 }
 
-export function collectHooks(target: HookEnabled, method: string) {
-  const { collected, collectedAll, around } = target.__hooks
+export function collectHooks(target: HookEnabled, method: string, includeAll: boolean = true) {
+  const { collected, collectedAll, around, allMethods } = target.__hooks
+
+  // Only include "all" hooks if includeAll is true AND
+  // (allMethods is not defined OR method is in allMethods)
+  const shouldIncludeAll = includeAll && (!allMethods || allMethods.has(method))
 
   return [
-    ...(around.all || []),
+    ...(shouldIncludeAll ? around.all || [] : []),
     ...(around[method] || []),
-    ...(collectedAll.before || []),
+    ...(shouldIncludeAll ? collectedAll.before || [] : []),
     ...(collected[method] || []),
-    ...(collectedAll.after || [])
+    ...(shouldIncludeAll ? collectedAll.after || [] : [])
   ] as AroundHookFunction[]
 }
 
@@ -185,11 +194,11 @@ export function hookMixin<A>(this: A, service: FeathersService<A>, path: string,
 
   const hookMethods = getHookMethods(service, options)
 
-  const serviceMethodHooks = hookMethods.reduce((res, method) => {
+  const createMethodHookManager = (app: A, method: string) => {
     const params = (defaultServiceArguments as any)[method] || ['data', 'params']
 
-    res[method] = new FeathersHookManager<A>(this, method).params(...params).props({
-      app: this,
+    return new FeathersHookManager<A>(app, method).params(...params).props({
+      app,
       path,
       method,
       service,
@@ -203,15 +212,31 @@ export function hookMixin<A>(this: A, service: FeathersService<A>, path: string,
         this.http.status = value
       }
     })
+  }
 
+  const serviceMethodHooks = hookMethods.reduce((res, method) => {
+    res[method] = createMethodHookManager(this, method)
     return res
   }, {} as BaseHookMap)
 
   const registerHooks = enableHooks(service)
 
+  // Set which methods should receive "all" hooks (from the methods option)
+  ;(service as any).__hooks.allMethods = new Set(hookMethods)
+
   hooks(service, serviceMethodHooks)
 
-  service.hooks = function (this: any, hookOptions: any) {
+  service.hooks = createServiceHooksMethod(this, registerHooks, createMethodHookManager)
+
+  return service
+}
+
+function createServiceHooksMethod<A>(
+  app: A,
+  registerHooks: ReturnType<typeof enableHooks>,
+  createMethodHookManager: (app: A, method: string) => FeathersHookManager<A>
+) {
+  return function (this: any, hookOptions: any) {
     if (hookOptions.before || hookOptions.after || hookOptions.error || hookOptions.around) {
       return registerHooks.call(this, hookOptions)
     }
@@ -221,10 +246,22 @@ export function hookMixin<A>(this: A, service: FeathersService<A>, path: string,
     }
 
     Object.keys(hookOptions).forEach((method) => {
-      const manager = getManager(this[method])
+      // Skip 'all' since it's not an actual method
+      if (method === 'all') {
+        return
+      }
 
+      let manager = getManager(this[method])
+
+      // Lazily create hook manager for methods not initially configured
       if (!(manager instanceof FeathersHookManager)) {
-        throw new Error(`Method ${method} is not a Feathers hooks enabled service method`)
+        if (typeof this[method] !== 'function') {
+          throw new Error(`Method ${method} does not exist on this service`)
+        }
+
+        const methodManager = createMethodHookManager(app, method)
+        hooks(this, { [method]: methodManager })
+        manager = methodManager
       }
 
       manager.middleware(hookOptions[method])
@@ -232,6 +269,4 @@ export function hookMixin<A>(this: A, service: FeathersService<A>, path: string,
 
     return this
   }
-
-  return service
 }

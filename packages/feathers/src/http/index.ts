@@ -4,7 +4,7 @@ import { BadRequest, MethodNotAllowed, NotFound } from '../errors.js'
 import { hooks, middleware } from '../hooks/index.js'
 import * as utils from './utils.js'
 import { BODY_METHODS, bodyParser, errorHandler, queryParser } from './middleware.js'
-import { createContext, defaultServiceMethods, getServiceOptions } from '../index.js'
+import { createContext, defaultServiceMethods, getExternalMethods, getServiceOptions } from '../index.js'
 
 export type HttpParams<Q> = Params<Q> & {
   request?: Request
@@ -138,13 +138,13 @@ export function createHandler(
     const methodOverride = headers[utils.METHOD_HEADER]
     // Get the service method for the request.
     const method = utils.getServiceMethod(request.method, id, methodOverride)
-    // Get the methods supported by the service.
-    const { methods } = getServiceOptions(service)
+    // Get the methods exposed externally by the service.
+    const externalMethods = getExternalMethods(getServiceOptions(service))
 
-    // If the service does not support the requested method, throw an error.
+    // If the service does not support the requested method externally, throw an error.
     // Standard methods can only be called via their HTTP verb, not the method override header.
     if (
-      (methods && !methods.includes(method)) ||
+      (externalMethods && !externalMethods.includes(method)) ||
       (methodOverride !== undefined && defaultServiceMethods.includes(methodOverride))
     ) {
       throw new MethodNotAllowed(`Method \`${method}\` is not supported by this endpoint.`)
