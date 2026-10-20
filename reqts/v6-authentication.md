@@ -30,8 +30,8 @@ Runtime facts not verified in this session (check before build): Web Crypto `HMA
 
 | Tier | Contents | Recommendation |
 |---|---|---|
-| 1 | Authentication service, JWT strategy (HS256), local strategy (email/password) with a pluggable `hasher`, `authenticate` hook, client token handling, SSE auth | Build first |
-| 2 | RS256/ES256 and JWKS verification, SSE ticket for native `EventSource` | After tier 1 ships |
+| 1 | Authentication service, JWT strategy (HS256), local strategy (email/password) with a pluggable `hasher`, `authenticate` hook, client token handling, SSE auth. No refresh tokens: clients log in again on expiry | Build first |
+| 2 | RS256/ES256 and JWKS verification, refresh strategy, SSE ticket for native `EventSource` | After tier 1 ships |
 | 3 | OAuth (authorization-code flow, provider profiles) | Separate package, later |
 
 Recommendation: ship tier 1 only. Tier 1 covers the scaffold's API-key hook replacement and the login flow every v5 app used. OAuth needs redirects, session state, and provider-specific profiles, which belong in their own package with their own dependencies.
@@ -64,7 +64,7 @@ interface AuthenticationConfig {
   authStrategies: string[]  // strategies allowed to create a token, e.g. ['jwt', 'local']
   jwt: {
     algorithm: 'HS256'      // only value in tier 1
-    expiresIn: number       // seconds, default 86400
+    expiresIn: number       // seconds, default 86400; tier 1 has no refresh, so expiry ends the session
     issuer: string          // default 'feathers'
     audience?: string
   }
@@ -76,6 +76,8 @@ interface AuthenticationConfig {
   }
 }
 ```
+
+Core ships no bcrypt code. A v5 app migrates by passing a `hasher` that verifies bcrypt hashes (see Security behaviors).
 
 ### Service
 
@@ -122,7 +124,7 @@ Behavior:
 `feathers/authentication/client` exports `authenticationClient({ storage, header })`.
 
 - `app.authenticate({ strategy, ...credentials })` calls `POST /authentication` and stores `accessToken` through `storage`.
-- `app.reAuthenticate()` reads the stored token and verifies it.
+- `app.reAuthenticate()` reads the stored token and verifies it. When the token has expired, it rejects with `NotAuthenticated`, and the app calls `app.authenticate` with credentials again. The client never requests a new token on its own.
 - `app.logout()` removes the token.
 - The client adds `Authorization: Bearer <token>` to `params.headers` for every request, including the SSE `find`.
 - `storage` defaults to an in-memory store. A `localStorage` adapter is opt-in (v5 had `MemoryStorage` and `StorageWrapper`, `storage.ts:7, 31`).
@@ -132,7 +134,7 @@ Behavior:
 - HTTP: `Authorization: Bearer <jwt>`. A bare token without the scheme is rejected.
 - SSE with the Feathers client: same header, because the client uses `fetch` (see research).
 - SSE with a native browser `EventSource`: the API cannot set headers. Tier 2 adds `POST /authentication` with `{ strategy: 'sse-ticket' }`, which returns a 30-second, single-use ticket. The SSE service accepts `?ticket=` once. Query-string access tokens are not supported, because URLs land in server and proxy logs.
-- Stream lifetime: when the connection's token `exp` passes, the server ends the stream. The client reconnects with a fresh token (`sseClient` already reconnects with backoff, `client/sse.ts:36-52`). This replaces v5's expiration timer on the connection.
+- Stream lifetime: when the connection's token `exp` passes, the server ends the stream. The app logs in again to get a fresh token (tier 1 has no refresh), and the client reconnects with it (`sseClient` already reconnects with backoff, `client/sse.ts:36-52`). This replaces v5's expiration timer on the connection.
 - Publishers: `authenticate('jwt')` on the SSE service `find` puts `user` on the connection params, so `app.publish` and `channel.dataFor` read `connection.user`.
 
 ## Users service and database adapters
@@ -150,6 +152,8 @@ Behavior:
 - Claims: `exp`, `nbf`, `iss`, and `aud` (when configured) are checked on every verification. A token without `exp` is rejected.
 - Signature comparison uses `crypto.subtle.verify`.
 - Password hash format: `pbkdf2-sha256$<iterations>$<salt b64>$<hash b64>`, 16-byte random salt, 32-byte derived key. The format stores its own iteration count so a later increase does not break old hashes.
+- Hash format discrimination: a stored hash that starts with `$2a$` or `$2b$` is a v5 bcrypt hash. A stored hash that starts with `pbkdf2-sha256$` is the format above. The `hasher` reads the prefix to pick its verify path.
+- bcrypt migration: core contains no bcrypt code. The spec documents a bcrypt-verify `hasher` that the app supplies, for example one that calls `bcryptjs` inside the app. That hasher verifies `$2a$/$2b$` hashes with bcrypt and hands `pbkdf2-sha256$` hashes to the default PBKDF2 hasher, which `feathers/authentication` exports as `pbkdf2Hasher`.
 - Password comparison: the derived bytes are compared with a loop that touches every byte, with no early return.
 - Unknown user: the local strategy hashes the submitted password against a fixed dummy salt before throwing, so response time does not reveal whether the email exists.
 - Error text: every local-login failure returns `NotAuthenticated('Invalid login')` (v5 default, `strategy.ts:31`).
@@ -180,27 +184,35 @@ Fixture: an app with an in-memory `users` service, an `authentication` service, 
 13. `cmd:` `grep -c '"dependencies"' packages/feathers/package.json` prints `0`.
 14. `cmd:` `pnpm --filter feathers test` passes on Node 22, and the authentication tests pass under `bun test` and `deno test` (runner commands to be fixed in the plan).
 15. `cmd:` a Workers smoke script (`wrangler dev` or `workerd`) logs in and calls a protected route.
-16. `James:` the scaffold in `create-feathers` generates a project whose `authenticate` hook uses `feathers/authentication` and whose README login example works.
+16. `test:` with an app-supplied `hasher` that verifies bcrypt, POST `/authentication` with `{ strategy: 'local' }` for a user whose stored hash is a `$2b$` bcrypt hash returns 201 with an `accessToken`, and a wrong password returns 401 `Invalid login`.
+17. `test:` with the same `hasher`, a user whose stored hash starts with `pbkdf2-sha256$` also logs in, so one app holds both formats.
+18. `cmd:` `grep -rniE 'bcrypt' packages/feathers/src` prints no match outside test files, and `grep -c '"dependencies"' packages/feathers/package.json` still prints `0`.
+19. `test:` the POST `/authentication` response body has no `refreshToken` key, and POST `/authentication` with `{ strategy: 'refresh' }` returns 401.
+20. `test:` `app.reAuthenticate()` with a stored token whose `exp` is in the past rejects with `NotAuthenticated`, and the client sends no request to `/authentication` during that call.
+21. `James:` the scaffold in `create-feathers` generates a project whose `authenticate` hook uses `feathers/authentication` and whose README login example works.
 
 ## Won't
 
 - The first release will not include OAuth, social login, or provider profiles.
-- The first release will not store tokens server-side. There is no token revocation list and no refresh tokens.
+- The first release will not store tokens server-side. There is no token revocation list and no refresh tokens. Clients log in again on expiry; a refresh strategy is tier 2.
 - The first release will not accept access tokens in query strings.
 - The first release will not add a WebSocket transport or socket authentication.
-- The first release will not bundle bcrypt or Argon2. Apps pass their own `hasher` for either.
+- The first release will not bundle bcrypt or Argon2. Apps pass their own `hasher` for either, including the bcrypt-verify `hasher` that migrates v5 hashes.
 - The first release will not add role or permission checks (authorization). Apps write those hooks.
 
 ## Decisions
 
 - 2026-10-20 James: authentication ships as the core subpath `feathers/authentication`, with zero runtime dependencies (Option A).
 - 2026-10-20 James: tier 1 ships a pluggable `hasher` interface. The default hasher is PBKDF2-SHA256 at 600,000 iterations. A Workers deployment that hits an iteration cap swaps in another hasher.
+- 2026-10-20 James: v5 bcrypt hashes verify through the tier 1 pluggable `hasher`. Core ships no bcrypt code; the spec documents a bcrypt-verify hasher the app supplies (for example with `bcryptjs`), and the hash prefix (`$2a$/$2b$` against `pbkdf2-sha256$`) lets the hasher tell the formats apart.
+- 2026-10-20 James: tier 1 has no refresh tokens, and clients log in again on expiry. A refresh strategy moves to tier 2 in the scope table, next to RS256/JWKS.
 
 ## Open questions for James
 
 1. Answered 2026-10-20: core subpath. See Decisions.
 2. Answered 2026-10-20: pluggable hasher in tier 1, PBKDF2 at 600,000 by default. See Decisions.
-3. Should v5 bcrypt hashes verify for migration? That needs an optional bcrypt verifier function, not a dependency.
+3. Answered 2026-10-20: yes, through the tier 1 pluggable `hasher`; core ships no bcrypt code. See Decisions.
 4. Is a native `EventSource` ticket flow needed, or does every consumer use the Feathers client?
 5. Should the scaffold keep the API-key hook as a second strategy (`api-key`) alongside JWT?
-6. Which refresh story do we want: none (re-login on expiry), or a refresh strategy in tier 2?
+6. Answered 2026-10-20: tier 1 has no refresh tokens; a refresh strategy is tier 2. See Decisions.
+7. Should the bcrypt-verify `hasher` rehash to PBKDF2 after a successful login? The spec does not define the `PasswordHasher` interface (`hash`, `verify`, or a rehash signal), so a rehash behavior needs that interface first. Where would the rehashed value be written, since the hasher has no users-service handle?

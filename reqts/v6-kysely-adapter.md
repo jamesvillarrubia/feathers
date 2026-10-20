@@ -46,6 +46,8 @@ Users who move to v6 have no maintained way to expose a Postgres table as a Feat
 - Knex passthrough `params.knex` (a prebuilt query builder that `_find` clones, `adapter.ts:181`). Kysely has no equivalent that survives typing; users add a custom method instead.
 - SQLite, MySQL, MSSQL and Oracle branches: the `RETURNING_CLIENTS` list and the `mssql` default sort (`adapter.ts:27`, `:195-197`), the SQLite error table (`error-handler.ts:39-63`), and the MySQL `sqlState` table (`error-handler.ts:9-38`). The adapter targets Postgres only.
 - `tableOptions.only` (`knex/src/declarations.ts`).
+- The `NULL` fill in `update`: v5 writes `null` for every field absent from the replacement (`adapter.ts:327-331`). The new `update` rejects a payload that omits a non-id column with `BadRequest` and never writes `NULL` for a missing column. `patch` covers partial writes.
+- Unrestricted column names in queries: v5 passes any query key, `$select` entry, and `$sort` key to SQL. The new adapter rejects any of them that is not in the required `columns` option.
 - `extendedOperators` as a free-form operator-to-SQL string map (`adapter.ts:91-95`). The replacement is a typed `operators` option (see API).
 - The Postgres error table in v5 maps class 23 (including unique violation) to `BadRequest` and class 22 to `NotFound` (`error-handler.ts:72-78`). The new table maps `23505` to `Conflict` and class 22 to `BadRequest`.
 - Per-row `Promise.all` inserts for array `create` (`adapter.ts:250`). The new adapter issues one multi-row `INSERT ... RETURNING *`.
@@ -89,6 +91,7 @@ export interface KyselyServiceOptions<DB, TB extends keyof DB & string> {
   table: TB
   schema?: string
   id?: keyof DB[TB] & string              // default 'id'
+  columns: readonly (keyof DB[TB] & string)[]   // required; the only names a query may reference
   paginate?: PaginationParams             // default false
   multi?: boolean | ('create' | 'patch' | 'remove')[]   // default false
   events?: string[]
@@ -117,9 +120,12 @@ export class KyselyService<DB, TB extends keyof DB & string, Result = Selectable
 ```
 
 - `Selectable`, `Insertable`, `Updateable` come from Kysely, so the DB type drives `Result`, `Data`, `PatchData`.
+- `columns` takes its element type from `keyof DB[TB] & string`, so `tsc` rejects a name that is not a column of the table type. The option is required: a `KyselyService` constructed without `columns` fails to compile, and the constructor throws `Error('You must provide a columns list')` at runtime for untyped callers.
+- The adapter always accepts the `id` option's column, even when `columns` omits it.
+- `Insertable` marks columns with defaults as optional, so the `Data` type of `update` does not enforce a full row. `update` enforces it at runtime (see Method behavior).
 - `KyselyService` implements the six methods that `ServiceMethods` requires (`declarations.ts:81-102`). `setup` and `teardown` are absent; the app owns the Kysely instance and its pool.
 - The constructor throws `Error('You must provide a Kysely instance as db')` when `db` is missing and `Error('No table name specified.')` when `table` is not a string (the v5 messages at `knex/src/adapter.ts:38-44`, reworded).
-- Registration: `app.use('users', new KyselyService({ db, table: 'users', paginate: { default: 10, max: 50 } }))`. `methods` and `externalMethods` default as in `service.ts:59-65`.
+- Registration: `app.use('users', new KyselyService({ db, table: 'users', columns: ['id', 'name', 'age'], paginate: { default: 10, max: 50 } }))`. `methods` and `externalMethods` default as in `service.ts:59-65`.
 - Row typing: `find` without `paginate: false` returns `Paginated<Result>` when options set `paginate.default`, and `Result[]` otherwise.
 
 ## Query syntax and SQL mapping
@@ -146,8 +152,9 @@ All examples assume table `users` and Kysely's identifier quoting.
 | `{ $skip: 10 }` | `OFFSET 10` |
 
 - Several operators on one column combine with `AND`: `{ age: { $gt: 1, $lt: 9 } }` yields `"age" > $1 AND "age" < $2`.
-- Every value is a bind parameter. No query value reaches the SQL text. Column names come from query keys and `$sort`/`$select`; the adapter passes each through `sql.ref` or `eb.ref`, which quotes identifiers.
-- A dotted key such as `profile.age` is a qualified reference, `"profile"."age"`. Nested JSON-path queries are not supported.
+- Every value is a bind parameter. No query value reaches the SQL text. Column names come from query keys and `$sort`/`$select`; the adapter checks each against `columns` (plus the id column) and then passes it through `sql.ref` or `eb.ref`, which quotes identifiers.
+- A query key, `$select` entry, or `$sort` key that is not in `columns` throws `BadRequest("Invalid column 'x'")` before any SQL runs. The check also covers keys nested inside `$or` and `$and`. A client cannot probe for column names through Postgres errors.
+- A dotted key such as `profile.age` is not in `columns` and throws `BadRequest`. Nested JSON-path queries and joined-table references are not supported.
 - A `$` key not in the allowed set throws `BadRequest('Invalid query parameter $x')` (v5 text, `query.ts:21`).
 - `$sort` values other than `1` and `-1` throw `BadRequest`.
 - `$limit: 0` returns `{ total, limit: 0, skip, data: [] }` with a count query when paginated, and `[]` without a query when not paginated.
@@ -159,7 +166,7 @@ All examples assume table `users` and Kysely's identifier quoting.
 - `find`: sanitise `params.query`, build `WHERE`, `ORDER BY`, `LIMIT`, `OFFSET`; paginate as above.
 - `get(id, params)`: `WHERE id = $1 AND <query>`; zero rows throws `NotFound("No record found for id 'x'")`.
 - `create(data)`: one `INSERT ... RETURNING *`. An array needs `multi` to include `create`, otherwise `MethodNotAllowed('Can not create multiple entries')` (`knex/src/index.ts:42-44`). An array inserts in one statement and returns rows in input order. `$select` in `params.query` applies to the returned rows.
-- `update(id, data)`: `id` required; `null` throws `BadRequest` (`adapter.ts:321-323`). One `UPDATE ... SET` over every column that `get` returns, with `NULL` for absent fields, excluding the id column. A row that does not match `id` plus query throws `NotFound`.
+- `update(id, data)`: full-row only. `id` required; `null` throws `BadRequest` (`adapter.ts:321-323`). `data` must contain every non-id column in `columns`; a payload that omits any of them throws `BadRequest` naming the missing columns, before any SQL runs. `update` never writes `NULL` for a missing column. When `data` is complete, one `UPDATE ... SET` writes every non-id column and returns the row. A row that does not match `id` plus query throws `NotFound`. Callers who want a partial write use `patch`.
 - `patch(id, data)`: strips the id field from `data`, runs `UPDATE ... WHERE id = $1 AND <query> RETURNING *`. `patch(null, ...)` needs `multi` to include `patch` (`MethodNotAllowed('Can not patch multiple entries')`), updates every row matching the query, and returns them. An empty `data` after stripping returns the current row or rows without issuing `UPDATE`.
 - `remove(id)`: `DELETE ... WHERE id = $1 AND <query> RETURNING *`. `remove(null)` follows the same `multi` rule.
 - `patch` and `remove` ignore `$limit`, `$skip`, `$sort` for the write (`knex/src/index.ts:60`, `:72` drop `$limit`).
@@ -204,8 +211,9 @@ Tests run at the service boundary against a real Postgres. A mock Kysely would t
 - CI adds a `services: postgres` block to `.github/workflows/nodejs.yml` (which has no `services:` block today; search: `grep -n -E 'services:|postgres' .github/workflows/*.yml` returns no match).
 - `packages/adapter-tests` ports v5 `adapter-tests/src/{basic,methods,syntax}.ts` from mocha globals to vitest (`it`, `describe`, `afterAll`). The 85 test names stay, minus those for dropped features.
 - The suite calls the service through `app.use(...)` and the service methods, and a second pass calls it through the v6 HTTP handler (`packages/feathers/src/http/index.ts`) with `fetch`/`Request`, so `externalMethods`, query-string parsing, and error status codes are covered end to end.
-- Added tests beyond v5: `$like`/`$ilike`, `$in: []`, `$nin: []`, `$ne: null`, unique violation returns `Conflict` with HTTP 409, transaction commit, transaction rollback on a thrown error, nested transaction joins the outer one, `create` of an array keeps input order, and `patch(null)` is atomic (a concurrent insert between lookup and write cannot be missed).
-- Types: a `tsd`-style compile test asserts that `service.get(1)` has the `Selectable<DB['users']>` type and that `create` rejects a field missing from `Insertable`.
+- The v5 adapter-tests that call `update` with a partial payload and expect `null` fill are dropped; a replacement test asserts the `BadRequest`.
+- Added tests beyond v5: `update` with a missing column returns `BadRequest` and leaves the row unchanged, a query key, `$select` entry, and `$sort` key outside `columns` each return `BadRequest`, `$like`/`$ilike`, `$in: []`, `$nin: []`, `$ne: null`, unique violation returns `Conflict` with HTTP 409, transaction commit, transaction rollback on a thrown error, nested transaction joins the outer one, `create` of an array keeps input order, and `patch(null)` is atomic (a concurrent insert between lookup and write cannot be missed).
+- Types: a `tsd`-style compile test asserts that `service.get(1)` has the `Selectable<DB['users']>` type, that `create` rejects a field missing from `Insertable`, that constructing `KyselyService` without `columns` is a type error, and that a `columns` entry outside the table type is a type error.
 - Coverage threshold follows the repo `vitest.config.ts`.
 
 ## Done when
@@ -220,8 +228,13 @@ Tests run at the service boundary against a real Postgres. A mock Kysely would t
 8. `cmd:` `npm ls -w packages/kysely --omit=dev --omit=peer` lists no runtime dependencies.
 9. `cmd:` `grep -n -E 'dependencies|peerDependencies' packages/feathers/package.json` is unchanged from `main` of this branch (core stays dependency-free).
 10. `cmd:` `.github/workflows/nodejs.yml` runs the Kysely tests on Node 20.x and 24.x with a Postgres service, and the run is green on the PR head SHA.
-11. `James:` `reqts/v6-kysely-adapter.md` open questions are answered, and the package name is chosen.
-12. `James:` a 20-line example app in `docs/` registers a `users` service and serves `GET /users` from a real database.
+11. `test:` `service.update(1, { name: 'x' })` on a table whose `columns` include `age` throws `BadRequest` naming `age`, and `service.get(1)` afterwards still returns the original `age`.
+12. `test:` `update` with every non-id column present returns the replaced row, and a column set to `null` in the payload is written as `NULL`.
+13. `test:` `GET /users?nope=1` returns 400 with message `Invalid column 'nope'`; `GET /users?$select[]=nope` and `GET /users?$sort[nope]=1` each return 400 the same way.
+14. `test:` `GET /users?$or[0][nope]=1` returns 400, and `GET /users?profile.age=1` returns 400.
+15. `cmd:` a `tsc` compile test fails on `new KyselyService({ db, table: 'users' })` (no `columns`) and on `columns: ['nope']` for a table with no `nope` column.
+16. `James:` `reqts/v6-kysely-adapter.md` open questions are answered, and the package name is chosen.
+17. `James:` a 20-line example app in `docs/` registers a `users` service and serves `GET /users` from a real database.
 
 ## Won't
 
@@ -232,10 +245,14 @@ Tests run at the service boundary against a real Postgres. A mock Kysely would t
 - Support JSON-path or full-text query operators in v1. Users reach for a custom service method.
 - Keep the v5 `params.knex` query-builder passthrough or `extendedOperators` string map.
 - Write generated Kysely table types for the user.
+- Fill missing columns with `NULL` in `update`, or accept a partial payload in `update`.
+- Read the column list from `information_schema` at runtime. The app supplies `columns`.
 
 ## Decisions
 
 - 2026-10-20 James: the adapter lives in a new workspace package, `packages/kysely`, and the ported suite lives in a private `packages/adapter-tests`.
+- 2026-10-20 James: `update()` is full-row only. It throws `BadRequest` when the payload omits any non-id column and never writes `NULL` for a missing column. `patch()` covers partial writes. v5's NULL-fill is dropped.
+- 2026-10-20 James: a `columns` option is required. The adapter rejects (`BadRequest`) any query key, `$select` entry, or `$sort` key not in `columns`. The option type derives from the Kysely DB table type, so `tsc` checks it.
 
 ## Open questions for James
 
@@ -243,7 +260,7 @@ Tests run at the service boundary against a real Postgres. A mock Kysely would t
 2. Should the v5 hook-less `_find`, `_get`, `_create`, `_update`, `_patch`, `_remove` family (`adapter-commons/src/service.ts:121-186`) exist in v6? The spec omits them and sanitises inside the public methods. Dropping them means a server-side caller cannot skip query sanitising.
 3. Does v6 keep `params.adapter` per-call overrides (`service.ts:81-89`)? The spec keeps them because two v5 tests (`params.adapter + paginate`, `params.adapter + multi`) exercise them.
 4. Should `packages/adapter-tests` stay a private workspace package, or publish for third-party adapters? The spec assumes private.
-5. Should the adapter whitelist queryable columns (a `columns` option or a runtime column list read once from `information_schema`)? Without it, a query on a missing column returns `Unprocessable` from Postgres, and a client can probe column names that way.
+5. Answered 2026-10-20: required `columns` option, rejected with `BadRequest` outside it, typed from the DB table type. See Decisions.
 6. Minimum versions: Kysely `>=0.27` and `pg` `>=8`? The spec does not pin them; CI cost grows with a version matrix.
 7. Does the `around` transaction hook live in this package or move to a generic `feathers/hooks` helper? The spec keeps it local because it needs a Kysely type.
-8. `update` semantics: v5 writes `null` for absent columns (`adapter.ts:327-331`). Postgres columns with defaults or NOT NULL will fail. Keep v5 behavior, or restrict `update` to full-row payloads and throw `BadRequest` otherwise?
+8. Answered 2026-10-20: `update` is full-row only and throws `BadRequest` on an omitted non-id column; v5 NULL-fill dropped. See Decisions.
