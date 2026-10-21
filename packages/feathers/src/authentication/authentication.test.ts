@@ -1,7 +1,7 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { createAuthApp, SECRET } from '../../fixtures/authentication.js'
 import { createPbkdf2Hasher, pbkdf2Hasher, type PasswordHasher } from './index.js'
-import { signJwt, base64urlEncode } from './jwt.js'
+import { signJwt, base64urlEncode, decodeJwtPayload } from './jwt.js'
 
 const now = () => Math.floor(Date.now() / 1000)
 
@@ -108,6 +108,57 @@ describe('local login', () => {
 
     expect(Object.keys(await ok.json())).not.toContain('refreshToken')
     expect(refresh.status).toBe(401)
+  })
+})
+
+describe('absolute session expiry', () => {
+  const LOGIN = { strategy: 'local', email: 'a@example.com', password: 'secret' }
+
+  // 33
+  it('stamps a local login token with auth_time and exp = auth_time + expiresIn', async () => {
+    const ctx = await setup({ config: { jwt: { expiresIn: 600 } } })
+    const body = await (await ctx.login(LOGIN)).json()
+    const payload = decodeJwtPayload(body.accessToken)!
+
+    expect(typeof payload.auth_time).toBe('number')
+    expect(payload.exp).toBe((payload.auth_time as number) + 600)
+  })
+
+  // 34
+  it('keeps the original exp and auth_time when strategy jwt re-mints later', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] })
+
+    try {
+      const ctx = await setup({ config: { jwt: { expiresIn: 600 } } })
+      const firstToken = (await (await ctx.login(LOGIN)).json()).accessToken as string
+      const first = decodeJwtPayload(firstToken)!
+
+      vi.setSystemTime(Date.now() + 300_000)
+
+      const res = await ctx.login({ strategy: 'jwt', accessToken: firstToken })
+      const again = decodeJwtPayload((await res.json()).accessToken)!
+
+      expect(res.status).toBe(201)
+      expect(again.auth_time).toBe(first.auth_time)
+      expect(again.exp).toBe(first.exp)
+      expect(again.iat).toBeGreaterThan(first.iat as number)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  // 35
+  it('rejects a token without auth_time at strategy jwt but accepts it on a protected route', async () => {
+    const ctx = await setup()
+    const legacy = await signJwt(
+      { sub: String(ctx.user.id), iss: 'feathers', iat: now(), exp: now() + 600 },
+      SECRET
+    )
+    const mint = await ctx.login({ strategy: 'jwt', accessToken: legacy })
+    const route = await ctx.call('/messages', { headers: { authorization: `Bearer ${legacy}` } })
+
+    expect(mint.status).toBe(401)
+    expect(route.status).toBe(200)
   })
 })
 

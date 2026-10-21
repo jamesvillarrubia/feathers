@@ -160,12 +160,28 @@ export class AuthenticationService implements AuthenticationServiceLike {
     const user = entity !== null ? (result[entity] as Record<string, any> | undefined) : undefined
     const sub = user ? String(user[this.entityId]) : result.authentication?.payload?.sub
     const iat = Math.floor(Date.now() / 1000)
+    let authTime = iat
+    let exp = iat + jwt.expiresIn
+
+    if (name === 'jwt') {
+      // A token minted from a token keeps the original login's absolute expiry.
+      const presented = result.authentication?.payload
+
+      if (typeof presented?.auth_time !== 'number' || typeof presented.exp !== 'number') {
+        throw invalid()
+      }
+
+      authTime = presented.auth_time
+      exp = presented.exp
+    }
+
     const payload = {
       ...(sub !== undefined ? { sub } : {}),
       iss: jwt.issuer,
       ...(jwt.audience ? { aud: jwt.audience } : {}),
       iat,
-      exp: iat + jwt.expiresIn
+      auth_time: authTime,
+      exp
     }
     const accessToken = await signJwt(payload, this.configuration.secret)
 

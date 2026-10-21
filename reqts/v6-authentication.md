@@ -64,7 +64,7 @@ interface AuthenticationConfig {
   authStrategies: string[]  // strategies allowed to create a token, e.g. ['jwt', 'local']; 'api-key' is rejected here
   jwt: {
     algorithm: 'HS256'      // only value in tier 1
-    expiresIn: number       // seconds, default 86400; tier 1 has no refresh, so expiry ends the session
+    expiresIn: number       // seconds, default 86400; a local login sets exp = auth_time + expiresIn, and a token minted from the jwt strategy keeps the presented token's exp, so expiry ends the session
     issuer: string          // default 'feathers'
     audience?: string
   }
@@ -230,6 +230,7 @@ One integration test lives in `packages/kysely` (which lists the `feathers` work
 30. `test:` the rehash patch carries no `provider`, and the users-service `hashPassword('password')` hook does not hash the value a second time (the stored hash verifies against the original password).
 31. `test:` in `packages/kysely`, local login against a Postgres users table with a PBKDF2 hash returns 201 with an `accessToken`, and a wrong password returns 401 `Invalid login`.
 32. `James:` the scaffold in `create-feathers` generates a project whose `authenticate` hook uses `feathers/authentication` and whose README login example works.
+33. `test:` a local login token carries `auth_time` (seconds) and `exp` equal to `auth_time + expiresIn`; after time advances, POST `/authentication` with `{ strategy: 'jwt', accessToken }` returns a token whose `exp` equals the presented token's `exp` and whose `auth_time` matches; a valid token with no `auth_time` gets 401 at that call and 200 on a protected route.
 
 ## Won't
 
@@ -253,6 +254,7 @@ One integration test lives in `packages/kysely` (which lists the `feathers` work
 - 2026-10-20 James: answered open question 5. Tier 1 ships a named `api-key` strategy next to `jwt` and `local` on the same `authenticate()` path, and it replaces the scaffold's API-key hook in `authenticate.tpl.ts`. Config: header name plus a key list or a verify function; comparison is timing-safe.
 - 2026-10-20 James: answered open question 7. `PasswordHasher` has `hash(password)`, `verify(password, hash)`, and `needsRehash(hash)`. After a successful local login where `needsRehash` returns true, the local strategy hashes the password with the default hasher and patches the user through the users service (internal call, no provider). A failed rehash patch does not fail the login; it is logged.
 - 2026-10-20 James: approved this spec for build.
+- 2026-10-21 James: a token minted from the jwt strategy keeps the original login's absolute expiry through an auth_time claim.
 
 ## Open questions for James
 
