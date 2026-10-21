@@ -38,6 +38,20 @@ export class SseService {
       }
     }
 
+    // A connection authenticated with a token ends when the token expires.
+    const exp = (connection as { authentication?: { payload?: { exp?: unknown } } }).authentication?.payload
+      ?.exp
+    const expiresIn = typeof exp === 'number' ? Math.max(0, exp * 1000 - Date.now()) : Infinity
+    // setTimeout overflows past 2^31 - 1 ms (about 24 days) and would fire at once
+    const expiryTimer =
+      expiresIn <= 2147483647
+        ? setTimeout(() => {
+            isActive = false
+            pendingResolve?.()
+            pendingResolve = null
+          }, expiresIn)
+        : undefined
+
     app.emit('connection', connection)
     app.addListener('publish', publishHandler)
 
@@ -54,12 +68,18 @@ export class SseService {
             yield eventBuffer.shift()!
           }
 
+          // The token can expire while the generator is suspended at a yield above.
+          if (!isActive) {
+            break
+          }
+
           await new Promise<void>((resolve) => {
             pendingResolve = resolve
           })
         }
       } finally {
         isActive = false
+        clearTimeout(expiryTimer)
         app.removeListener('publish', publishHandler)
         app.emit('disconnect', connection)
       }

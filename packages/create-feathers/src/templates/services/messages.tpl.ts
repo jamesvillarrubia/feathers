@@ -4,7 +4,7 @@ import { AppGeneratorContext } from '../../commons'
 const template = ({}: AppGeneratorContext) => /* ts */ `import type { Params } from 'feathers'
 import { hooks } from 'feathers/hooks'
 
-import { authenticate } from '../hooks/authenticate.js'
+import { authenticateRequest } from '../hooks/authenticate.js'
 
 export type Message = {
   text: string
@@ -13,7 +13,7 @@ export type Message = {
 
 // An example messages Feathers service
 @hooks([
-  authenticate
+  authenticateRequest
 ])
 export class MessageService {
   async find(params: Params) {

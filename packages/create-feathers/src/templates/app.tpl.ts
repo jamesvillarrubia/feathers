@@ -8,6 +8,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 
 const template = ({ sse }: AppGeneratorContext) => /* ts */ `import { feathers } from 'feathers'
 import type { HookContext as FeathersHookContext, Application as FeathersApplication } from 'feathers'
+import { AuthenticationService } from 'feathers/authentication'
 import { MessageService } from './services/messages.js'
 ${sse ? `import { SseService } from './services/sse.js'` : ''}
 
@@ -25,6 +26,18 @@ export type HookContext = FeathersHookContext<Application>
 
 const app: Application = feathers<Services, Configuration>()
 
+// Requests authenticate with a JWT or with an API key. Both values come from the environment (see .env).
+// Add a users service and set \`service\`, \`entity\` and \`local\` to let users log in with email and password.
+app.use(
+  'authentication',
+  new AuthenticationService({
+    secret: process.env.AUTH_SECRET as string,
+    entity: null,
+    service: 'users',
+    authStrategies: ['jwt'],
+    apiKey: { header: 'x-api-key', keys: [process.env.API_KEY as string] }
+  })
+)
 ${sse ? `app.use('sse', new SseService())` : ''}
 app.use('messages', new MessageService())
 
