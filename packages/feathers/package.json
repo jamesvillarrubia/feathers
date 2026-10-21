@@ -46,6 +46,14 @@
     "./http/node": {
       "import": "./lib/http/node.js",
       "require": "./cjs/http/node.js"
+    },
+    "./authentication": {
+      "import": "./lib/authentication/index.js",
+      "require": "./cjs/authentication/index.js"
+    },
+    "./authentication/client": {
+      "import": "./lib/authentication/client.js",
+      "require": "./cjs/authentication/client.js"
     }
   },
   "typesVersions": {
@@ -67,6 +75,12 @@
       ],
       "http/node": [
         "./lib/http/node.d.ts"
+      ],
+      "authentication": [
+        "./lib/authentication/index.d.ts"
+      ],
+      "authentication/client": [
+        "./lib/authentication/client.d.ts"
       ]
     }
   },
@@ -102,7 +116,10 @@
     "publish": "npm run reset-version",
     "compile": "shx rm -rf lib/ cjs/ && tsc && tsc -p tsconfig.cjs.json && echo '{\"type\":\"commonjs\"}' > cjs/package.json",
     "dev": "vitest",
-    "test": "vitest run --coverage"
+    "test": "vitest run --coverage",
+    "test:bun": "bun smoke/run.ts",
+    "test:deno": "deno run --unstable-sloppy-imports smoke/run.ts",
+    "test:workers": "node smoke/workers.mjs"
   },
   "engines": {
     "node": ">= 20"
@@ -113,6 +130,7 @@
   "devDependencies": {
     "@types/node": "^25.5.0",
     "@vitest/coverage-v8": "^5.0.0",
+    "jose": "^6.2.13",
     "shx": "^0.4.0",
     "typescript": "^7.0.2",
     "vitest": "^5.0.0"

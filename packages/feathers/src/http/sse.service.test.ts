@@ -249,5 +249,42 @@ describe('SseService', () => {
       const disconnectedConnection = await disconnectPromise
       expect(disconnectedConnection).toBe(connection)
     })
+
+    it('ends the stream within 1s of token expiry when it expires while the generator is suspended at a yield', async () => {
+      const expiring = {
+        query: {},
+        authentication: { payload: { exp: Date.now() / 1000 + 2 } }
+      }
+      const iterator = (await app.service('sse').find(expiring))[Symbol.asyncIterator]()
+
+      expect(((await iterator.next()).value as SsePayload).event).toBe('connected')
+
+      const channel = app.channel('exp-channel').join(expiring)
+
+      app.service('test').registerPublisher('created', () => channel)
+      await app.service('test').create({ id: 1 })
+      await app.service('test').create({ id: 2 })
+
+      // Suspend the generator at the yield of the first buffered event, then read late.
+      expect(((await iterator.next()).value as SsePayload).event).toBe('created')
+      await new Promise((resolve) => setTimeout(resolve, 2300))
+
+      const drain = (async () => {
+        const seen: string[] = []
+
+        for (;;) {
+          const result = await iterator.next()
+
+          if (result.done) return seen
+          seen.push((result.value as SsePayload).event)
+        }
+      })()
+      const outcome = await Promise.race([
+        drain,
+        new Promise<string>((resolve) => setTimeout(() => resolve('hung'), 1000))
+      ])
+
+      expect(outcome).not.toBe('hung')
+    })
   })
 })

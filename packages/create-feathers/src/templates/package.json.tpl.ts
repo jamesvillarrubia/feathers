@@ -2,8 +2,8 @@ import { toFile, writeJSON } from '@featherscloud/pinion'
 import type { AppGeneratorContext } from '../commons.js'
 
 const startCommands = {
-  node: 'tsx src/index.ts',
-  deno: 'deno run --unstable-sloppy-imports --allow-net src/index.ts',
+  node: 'tsx --env-file=.env src/index.ts',
+  deno: 'deno run --unstable-sloppy-imports --allow-net --allow-env --allow-read --env-file src/index.ts',
   bun: 'bun src/index.ts'
 }
 

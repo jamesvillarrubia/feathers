@@ -49,3 +49,6 @@ docs/.vitepress/cache
 website/node_modules
 website/.nuxt
 website/.output
+
+# wrangler local state from the smoke test
+packages/feathers/smoke/.wrangler/
