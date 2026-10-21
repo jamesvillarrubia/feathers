@@ -254,6 +254,8 @@ Tests run at the service boundary against a real Postgres. A mock Kysely would t
 - 2026-10-20 James: `update()` is full-row only. It throws `BadRequest` when the payload omits any non-id column and never writes `NULL` for a missing column. `patch()` covers partial writes. v5's NULL-fill is dropped.
 - 2026-10-20 James: a `columns` option is required. The adapter rejects (`BadRequest`) any query key, `$select` entry, or `$sort` key not in `columns`. The option type derives from the Kysely DB table type, so `tsc` checks it.
 - 2026-10-20 James: kept the spec pass's added calls (id column always accepted, dotted query keys rejected, columns whitelist excludes create/patch data keys, `pbkdf2Hasher` export, rehash-on-login as an open question).
+- 2026-10-20 James: approved this spec for build, with the stated defaults for open questions 2, 3, 4, 6, and 7.
+- 2026-10-20 James: the package is named `@jamesvillarrubia/feathers-kysely`.
 
 ## Open questions for James
 
