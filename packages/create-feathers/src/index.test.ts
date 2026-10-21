@@ -68,7 +68,7 @@ describe('create-feathers', () => {
     const env = await readFile(join(tmpDir, '.env'), 'utf8')
     const apiKey = /^API_KEY=(.+)$/m.exec(env)![1]
 
-    const readme = await readFile(join(tmpDir, 'README.md'), 'utf8')
+    const readme = await readFile(join(tmpDir, 'readme.md'), 'utf8')
 
     assert.ok(
       readme.indexOf('source .env') !== -1 && readme.indexOf('source .env') < readme.indexOf('$API_KEY'),
