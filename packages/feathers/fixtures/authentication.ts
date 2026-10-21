@@ -75,7 +75,12 @@ export class MemoryUsers {
 }
 
 class MessagesService {
-  async find() {
+  // Held in an object because `app.use` wraps the service, so `this` is not the registered instance.
+  seen: { params: any } = { params: {} }
+
+  async find(params: any = {}) {
+    this.seen.params = params
+
     return [{ text: 'hello' }]
   }
 
@@ -117,7 +122,9 @@ export async function createAuthApp(options: AuthAppOptions = {}) {
     } as AuthenticationConfig)
   )
   app.use('users', users)
-  app.use('messages', new MessagesService())
+  const messages = new MessagesService()
+
+  app.use('messages', messages)
   app.use('reports', reports)
   app.use('sse', new SseService())
 
@@ -152,5 +159,5 @@ export async function createAuthApp(options: AuthAppOptions = {}) {
 
   const login = (body: Record<string, unknown>) => call('/authentication', { method: 'POST', body })
 
-  return { app, users, reports, handler, call, login, logs }
+  return { app, users, reports, messages, handler, call, login, logs }
 }

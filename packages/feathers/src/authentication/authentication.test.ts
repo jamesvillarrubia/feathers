@@ -329,6 +329,76 @@ describe('sse', () => {
     await reader.cancel()
   })
 
+  // S5
+  it('passes params.headers.authorization and params.authentication.accessToken to a REST service', async () => {
+    const ctx = await setup()
+    const accessToken = await token(ctx)
+    const res = await ctx.call('/messages', { headers: { authorization: `Bearer ${accessToken}` } })
+
+    expect(res.status).toBe(200)
+    expect(ctx.messages.seen.params.headers.authorization).toBe(`Bearer ${accessToken}`)
+    expect(ctx.messages.seen.params.authentication.accessToken).toBe(accessToken)
+    expect(ctx.messages.seen.params.authenticated).toBe(true)
+  })
+
+  // S6
+  it('gives the channel and publisher a connection with no request, authorization header, token or password', async () => {
+    const ctx = await setup()
+    const accessToken = await token(ctx)
+    let joined: any
+    let published: any[] = []
+
+    ctx.app.on('connection', (connection: any) => {
+      joined = connection
+      ctx.app.channel('authenticated').join(connection)
+    })
+    ctx.app.publish(() => {
+      published = [...ctx.app.channel('authenticated').connections]
+
+      return ctx.app.channel('authenticated')
+    })
+
+    const res = await ctx.call('/sse', { headers: { authorization: `Bearer ${accessToken}` } })
+    const reader = res.body!.getReader()
+
+    await readUntil(reader, 'connected')
+    await ctx.app.service('messages').create({ text: 'live' })
+    await readUntil(reader, 'live')
+
+    expect(published).toHaveLength(1)
+    expect(published[0]).toBe(joined)
+
+    for (const connection of [joined, published[0]]) {
+      expect(connection.request).toBeUndefined()
+      expect(connection.headers?.authorization).toBeUndefined()
+      expect(connection.authentication.accessToken).toBeUndefined()
+      expect(connection.user.password).toBeUndefined()
+      expect(JSON.stringify(connection)).not.toContain(accessToken)
+    }
+
+    await reader.cancel()
+  })
+
+  // S7
+  it('delivers an event published to the user channel on the authenticated stream', async () => {
+    const ctx = await setup()
+    const accessToken = await token(ctx)
+
+    ctx.app.on('connection', (connection: any) => {
+      ctx.app.channel(`user-${connection.user.id}`).join(connection)
+    })
+    ctx.app.publish(() => ctx.app.channel(`user-${ctx.user.id}`))
+
+    const res = await ctx.call('/sse', { headers: { authorization: `Bearer ${accessToken}` } })
+    const reader = res.body!.getReader()
+
+    await readUntil(reader, 'connected')
+    await ctx.app.service('messages').create({ text: 'for-me' })
+
+    expect((await readUntil(reader, 'for-me')).seen).toContain('for-me')
+    await reader.cancel()
+  })
+
   // 10
   it('ends the stream within 2 seconds of a token that expires in 1 second', async () => {
     const ctx = await setup()
