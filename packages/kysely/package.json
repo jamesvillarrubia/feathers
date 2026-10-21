@@ -1,0 +1,66 @@
+{
+  "name": "@jamesvillarrubia/feathers-kysely",
+  "description": "Kysely Postgres database adapter for Feathers v6",
+  "version": "6.0.0-pre.11",
+  "homepage": "https://feathersjs.com",
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/feathersjs/feathers.git",
+    "directory": "packages/kysely"
+  },
+  "keywords": [
+    "feathers",
+    "kysely",
+    "postgres",
+    "adapter"
+  ],
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./lib/index.js",
+      "types": "./lib/index.d.ts"
+    }
+  },
+  "author": {
+    "name": "Feathers contributors",
+    "email": "hello@feathersjs.com",
+    "url": "https://feathersjs.com"
+  },
+  "license": "MIT",
+  "files": [
+    "LICENSE",
+    "README.md",
+    "src/**",
+    "lib/**"
+  ],
+  "scripts": {
+    "compile": "shx rm -rf lib/ && tsc",
+    "test": "vitest run",
+    "test:types": "tsc --noEmit -p tsconfig.test.json",
+    "db:up": "docker compose -f test/docker-compose.yml up -d --wait",
+    "db:down": "docker compose -f test/docker-compose.yml down"
+  },
+  "engines": {
+    "node": ">= 20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "peerDependencies": {
+    "feathers": "6.0.0-pre.11",
+    "kysely": ">=0.27.0"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "@types/pg": "^8.15.0",
+    "adapter-tests": "*",
+    "feathers": "6.0.0-pre.11",
+    "kysely": "^0.28.0",
+    "pg": "^8.16.0",
+    "shx": "^0.4.0",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.0"
+  }
+}

@@ -153,7 +153,7 @@ All examples assume table `users` and Kysely's identifier quoting.
 
 - Several operators on one column combine with `AND`: `{ age: { $gt: 1, $lt: 9 } }` yields `"age" > $1 AND "age" < $2`.
 - Every value is a bind parameter. No query value reaches the SQL text. Column names come from query keys and `$sort`/`$select`; the adapter checks each against `columns` (plus the id column) and then passes it through `sql.ref` or `eb.ref`, which quotes identifiers.
-- A query key, `$select` entry, or `$sort` key that is not in `columns` throws `BadRequest("Invalid column 'x'")` before any SQL runs. The check also covers keys nested inside `$or` and `$and`. A client cannot probe for column names through Postgres errors.
+- A query key, `$select` entry, or `$sort` key that is not in `columns` throws `BadRequest("Invalid column 'x'")` before any SQL runs. The check also covers keys nested inside `$or` and `$and`. This check covers query parameters only; keys in `create`, `patch` and `update` payloads are not whitelisted, so a client can learn column names from the Postgres errors that those writes produce.
 - A dotted key such as `profile.age` is not in `columns` and throws `BadRequest`. Nested JSON-path queries and joined-table references are not supported.
 - A `$` key not in the allowed set throws `BadRequest('Invalid query parameter $x')` (v5 text, `query.ts:21`).
 - `$sort` values other than `1` and `-1` throw `BadRequest`.

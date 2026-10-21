@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig",
+  "include": ["src/**/*.ts", "test/**/*.ts", "../adapter-tests/src/**/*.ts"],
+  "exclude": ["test/types/fixtures/**"],
+  "compilerOptions": {
+    "noEmit": true,
+    "types": ["node"]
+  }
+}

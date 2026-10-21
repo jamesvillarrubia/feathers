@@ -1,0 +1,19 @@
+# Postgres 16 for the adapter tests. Data lives on tmpfs, so every start is empty.
+# test/global-setup.ts starts this file on a free port; for manual use run:
+#   KYSELY_TEST_PG_PORT=54329 docker compose -f test/docker-compose.yml up -d --wait
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: feathers_kysely_test
+    ports:
+      - '127.0.0.1:${KYSELY_TEST_PG_PORT:-54329}:5432'
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d feathers_kysely_test']
+      interval: 1s
+      timeout: 3s
+      retries: 30
