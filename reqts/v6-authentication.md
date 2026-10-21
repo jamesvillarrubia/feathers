@@ -139,7 +139,7 @@ Behavior:
 - When `params.provider` is set and no credentials are present it throws `NotAuthenticated`.
 - When `params.provider` is unset (internal call) it calls `next()`.
 - It builds `params.authentication` from `params.headers` through the `parse` of each strategy named in the hook (`authorization: Bearer <token>` for `jwt`, `apiKey.header` for `api-key`), so REST, SSE, and tests that pass `params.headers` behave the same. The first named strategy whose `parse` returns credentials authenticates the request.
-- It merges the strategy result (`user`, `authentication`) into `context.params` and sets `params.authenticated = true`. It drops `accessToken` from the merged result (as v5 does, `authenticate.ts:56`).
+- It merges the strategy result (`user`, `authentication`) into `context.params` and sets `params.authenticated = true`. It drops the top-level `accessToken` from the merged result (as v5 does, `authenticate.ts:56`). Service params keep `params.headers.authorization` and `params.authentication.accessToken`, so a REST service can read or forward the header. The SSE service sanitizes the connection it stores: before it emits `connection` it deletes `params.request`, removes the `authorization` header and `authentication.accessToken`, and removes the password field from `connection.user`. It edits the connection in place, so `channel.connections.includes(connection)` still matches.
 - It throws when used on the authentication service itself (as v5, line 39-43).
 
 ### Client

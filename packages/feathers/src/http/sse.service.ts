@@ -7,6 +7,46 @@ export type SsePayload = {
   path?: string
 }
 
+/**
+ * Removes the raw credentials from a connection in place, so the object that channels and publishers
+ * hold (and that `channel.connections.includes(connection)` compares) is the same object that was
+ * registered. A connection is the params of a long-lived stream, so it must not carry the original
+ * `Request`, the `authorization` header, `authentication.accessToken` or the user's password.
+ */
+function sanitizeConnection(app: Application, connection: Params) {
+  const conn = connection as Record<string, any>
+  const authApp = app as any
+  let passwordField: string | undefined
+  let entityKey = 'user'
+
+  try {
+    const config = authApp.service(authApp.get('defaultAuthentication') ?? 'authentication').configuration
+
+    passwordField = config?.local?.passwordField
+    entityKey = config?.entity === null ? '' : (config?.entity ?? 'user')
+  } catch {
+    // No authentication service: nothing beyond the request and header to remove.
+  }
+
+  delete conn.request
+
+  if (conn.headers) {
+    conn.headers = Object.fromEntries(
+      Object.entries(conn.headers).filter(([name]) => name.toLowerCase() !== 'authorization')
+    )
+  }
+
+  if (conn.authentication) {
+    const { accessToken: _token, ...authentication } = conn.authentication
+    conn.authentication = authentication
+  }
+
+  if (entityKey && passwordField && conn[entityKey] && typeof conn[entityKey] === 'object') {
+    const { [passwordField]: _password, ...entity } = conn[entityKey]
+    conn[entityKey] = entity
+  }
+}
+
 export class SseService {
   app?: Application
   path?: string
@@ -52,6 +92,7 @@ export class SseService {
           }, expiresIn)
         : undefined
 
+    sanitizeConnection(app, connection)
     app.emit('connection', connection)
     app.addListener('publish', publishHandler)
 

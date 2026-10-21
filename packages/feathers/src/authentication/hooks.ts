@@ -51,30 +51,10 @@ export function authenticate(...strategies: string[]) {
     if (credentials) {
       const result = await authService.authenticate(credentials, params, ...strategies)
       const { accessToken: _dropped, ...rest } = result
-      const { passwordField } = authService.configuration.local ?? {}
-      const entityKey =
-        authService.configuration.entity === null ? undefined : (authService.configuration.entity ?? 'user')
 
-      // The params outlive the call (an SSE connection keeps them), so they carry no raw token or password.
-      if (rest.authentication) {
-        const { accessToken: _token, ...authentication } = rest.authentication as Record<string, unknown>
-
-        rest.authentication = authentication as typeof rest.authentication
-      }
-
-      if (entityKey && passwordField && rest[entityKey] && typeof rest[entityKey] === 'object') {
-        const { [passwordField]: _password, ...entity } = rest[entityKey] as Record<string, unknown>
-
-        rest[entityKey] = entity
-      }
-
-      const headers = params.headers
-        ? Object.fromEntries(
-            Object.entries(params.headers).filter(([name]) => name.toLowerCase() !== 'authorization')
-          )
-        : undefined
-
-      context.params = { ...params, ...rest, ...(headers ? { headers } : {}), authenticated: true } as any
+      // Service params keep the Authorization header and params.authentication.accessToken (as v5 does).
+      // The SSE service sanitizes the connection it stores.
+      context.params = { ...params, ...rest, authenticated: true } as any
     } else if (params.provider) {
       throw new NotAuthenticated('Invalid login')
     }
