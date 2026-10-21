@@ -1,0 +1,13 @@
+{
+  "name": "adapter-tests",
+  "private": true,
+  "description": "Shared Feathers database adapter test suite (vitest)",
+  "version": "6.0.0-pre.11",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "license": "MIT",
+  "devDependencies": {
+    "vitest": "^5.0.0"
+  }
+}
