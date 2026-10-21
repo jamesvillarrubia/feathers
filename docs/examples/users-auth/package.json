@@ -1,0 +1,21 @@
+{
+  "name": "feathers-example-users-auth",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "db:up": "docker compose up -d --wait",
+    "db:init": "docker compose exec -T postgres psql -v ON_ERROR_STOP=1 -U postgres -d feathers_example < schema.sql",
+    "start": "tsx src/index.ts",
+    "smoke": "tsx smoke.ts"
+  },
+  "dependencies": {
+    "@jamesvillarrubia/feathers-kysely": "file:../../../packages/kysely",
+    "feathers": "file:../../../packages/feathers",
+    "kysely": "^0.28.0",
+    "pg": "^8.16.0"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.15.0",
+    "tsx": "^4.20.0"
+  }
+}
